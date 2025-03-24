@@ -142,7 +142,7 @@ const generateChat = async (message, tabId, userId) => {
                             };
                             }
                             else if(userHasCalendarTokens && findUser.googleCalendarTokens.expiry_date < new Date().getTime()){
-                                console.log('TOKEN EXPIRED')
+                            console.log('---------------------TOKEN EXPIRED---------------------')
                             return{
                             tool_call_id: toolCall.id,
                             output: googleCalendarResult
@@ -229,88 +229,138 @@ const generateChat = async (message, tabId, userId) => {
 
 
 const generatePresentation = async (topic) => {
-  
+    const messages = [
+        {
+            role: 'user',
+            content: `Create a presentation about ${topic} with 5 slides.
+            For each slide provide: 
+                      1. A clear, concise title
+                      2. 3-4 bullet points with important information.
+            Return the result as a JSON object with this structure:
+            {
+              "title": "Main presentation title",
+              "slides": [
+                {
+                  "title": "Slide title",
+                  "bulletPoints": ["point 1", "point 2", "point 3"]
+                }
+              ]
+            }`
+        }
+    ];
+
     try {
-        const response = await openai.chat.completions.create({
+        let response
+        response = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
-            messages: [
+            messages: messages,
+            response_format: { type: "json_object" },  
+            tools: [
                 {
-                    role: "system",
-                    content: `Generate a structured presentation about ${topic} with 4 slides. 
-                              For each slide provide: 
-                              1. A clear, concise title
-                              2. 3-4 bullet points with important information.`
-                },
-                {
-                    role: 'user',
-                    content: `Create a presentation about ${topic}. Return the result as a JSON object with this structure:
-                    {
-                      "title": "Main presentation title",
-                      "slides": [
-                        {
-                          "title": "Slide title",
-                          "bulletPoints": ["point 1", "point 2", "point 3"]
+                    type: 'function',
+                    function: {
+                        name: 'identify',
+                        description: 'Get slide counts and bullet points count',
+                        parameters: {
+                            type: 'object',
+                            properties: {
+                                slideCounts: {
+                                    type: 'string',
+                                    description: "The number of slides in the presentation"
+                                },
+                                bulletPoints: {
+                                    type: 'string',
+                                    description: "The bullet points per slide"
+                                }
+                            },
+                            required: ['slideCounts', 'bulletPoints'],
+                            additionalProperties: false
                         }
-                      ]
-                    }`
+                    }
                 }
             ],
-            response_format: { type: "json_object" }
+            store: true
         });
+
+    
+        //  response.choices response
+        // [
+        //     {
+        //       index: 0,
+        //       message: {
+        //         role: 'assistant',
+        //         content: null,
+        //         tool_calls: [Array],
+        //         refusal: null,
+        //         annotations: []
+        //       },
+        //       logprobs: null,
+        //       finish_reason: 'tool_calls'
+        //     }
+        //   ]
+        // const choice = response.choices[0]
+        // if (choice.finish_reason === 'tool_calls') {
+        //     const toolCalls = choice.message.tool_calls;
+        //     if(toolCalls && toolCalls.length > 0){
+        //         for(let toolCall of toolCalls){
+        //             const functionArgs = JSON.parse(toolCall.function.arguments);
+        //             console.log(functionArgs)
+                   
+        //         }
+        //     }
+        // }
+        if(response && response.choices[0].finish_reason === 'tool_calls'){
+            const toolCall = response.choices[0]?.message?.tool_calls?.[0];
+            const args = JSON.parse(toolCall.function.arguments);
+             response = await openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                    {
+                        role: 'user',
+                        content: `Create a presentation about ${topic} with ${args.slideCounts} slides.
+                        For each slide provide: 
+                                  1. A clear, concise title
+                                  2. ${args.bulletPoints} bullet points with important information.
+                        Return the result as a JSON object with this structure:
+                        {
+                          "title": "Main presentation title",
+                          "slides": [
+                            {
+                              "title": "Slide title",
+                              "bulletPoints": ["point 1", "point 2", "point 3"]
+                            }
+                          ]
+                        }`
+                    }
+                ],
+                response_format: { type: "json_object" }, 
+                store: true
+            });
+        }
 
         let presentationData;
         try {
             console.log("Parsing presentation content");
-            const content = response.choices[0].message.content;
-            if (!content) {
-                throw new Error("Empty content from OpenAI");
-            }
+            const content = response.choices[0]?.message?.content;
+            if (!content) throw new Error("Empty content from OpenAI");
+
             presentationData = JSON.parse(content);
-            
-            // Validate the structure
-            if (!presentationData.title) {
-                presentationData.title = topic;
-            }
+            if (!presentationData.title) presentationData.title = topic;
             if (!Array.isArray(presentationData.slides)) {
                 console.warn("No slides array in response, creating empty array");
                 presentationData.slides = [];
             }
         } catch (e) {
             console.error("Error parsing presentation content:", e);
-            // Create a default structure if parsing fails
-            presentationData = { 
-                title: `Presentation about ${topic}`, 
-                slides: [] 
-            };
+            presentationData = { title: `Presentation about ${topic}`, slides: [] };
         }
-
-        // if (presentationData.slides.length === 0) {
-        //     console.warn("Creating default slides");
-        //     presentationData.slides = [
-        //         {
-        //             title: `Introduction to ${topic}`,
-        //             bulletPoints: ["Overview", "Importance", "Key concepts"]
-        //         },
-        //         {
-        //             title: `Key aspects of ${topic}`,
-        //             bulletPoints: ["First aspect", "Second aspect", "Third aspect"]
-        //         }
-        //     ];
-        // }
 
         console.log("Fetching images for slides");
         const slidesWithImages = await Promise.all(presentationData.slides.map(async (slide, index) => {
             const searchQuery = slide.title || topic;
             try {
-                const images = await unsplashImages(searchQuery);
-                if (images && images.length > 0) {
-                    slide.image = images[0];
-                    console.log(`Added image for slide ${index + 1}`);
-                } else {
-                    console.log(`No images found for "${searchQuery}", trying topic`);
-                    const fallbackImages = await unsplashImages(topic);
-                    slide.image = fallbackImages && fallbackImages.length > 0 ? fallbackImages[0] : null;
-                }
+                const images = await unsplashImages(searchQuery,);
+                slide.image = images?.length > 0 ? images[0] : null;
                 return slide;
             } catch (error) {
                 console.error(`Error fetching image for slide "${slide.title}":`, error);
@@ -320,10 +370,7 @@ const generatePresentation = async (topic) => {
         }));
 
         presentationData.slides = slidesWithImages;
-        
-
-
-        return generatePresentationDesign(presentationData)
+        return generatePresentationDesign(presentationData);
     } catch (error) {
         console.error("Error in generatePresentation:", error);
         return {
@@ -342,6 +389,9 @@ const generatePresentation = async (topic) => {
 
 
 
+
+
+
 async function generatePresentationDesign(data) {
     return `function PresentationComponent() {
   const data = ${JSON.stringify(data, null, 2)};
@@ -353,20 +403,26 @@ async function generatePresentationDesign(data) {
       contentWrapper: "md:w-1/2 p-8 space-y-6 backdrop-blur-sm bg-white/30"
     },
     {
-      container: "relative w-full max-w-7xl mx-auto rounded-2xl shadow-2xl overflow-hidden min-h-[500px]",
+      container: "relative w-full max-w-7xl mx-auto rounded-2xl  overflow-hidden min-h-[500px]",
       imageWrapper: "absolute inset-0 z-0",
-      contentWrapper: "relative z-10 p-12 bg-gradient-to-r from-white/90 to-transparent text-white"
+      contentWrapper: "relative z-10 p-8 bg-gradient-to-r from-white/90 to-transparent text-white"
     },
     {
-      container: "grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-7xl mx-auto rounded-2xl shadow-2xl p-8",
+      container: "grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-7xl mx-auto rounded-2xl  p-8",
       imageWrapper: "relative aspect-square rounded-xl overflow-hidden",
       contentWrapper: "flex flex-col justify-center space-y-6"
     },
+     {
+      container: "flex flex-col w-full max-w-7xl mx-auto md:flex-row-reverse rounded-2xl shadow-lg overflow-hidden",
+      imageWrapper: "md:w-1/2 relative group", 
+      contentWrapper: "md:w-1/2 p-8 space-y-6 backdrop-blur-sm bg-white/30"
+    },
     {
-      container: "flex flex-col items-center w-full max-w-7xl mx-auto rounded-2xl shadow-2xl p-12 text-center",
+      container: "flex flex-col items-center w-full max-w-7xl mx-auto rounded-2xl  p-12 text-center",
       imageWrapper: "w-64 h-64 rounded-full overflow-hidden mx-auto mb-8",
       contentWrapper: "max-w-2xl mx-auto space-y-6"
-    }
+    },
+   
   ];
 
   const gradients = [

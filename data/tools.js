@@ -49,19 +49,5 @@ module.exports = [
             },
             required: ['summary', 'location', 'description', 'date', 'end', 'attendees']
         }
-    },
-    {
-        name: 'get_image_category',
-        description: 'Get image category',
-        parameters: {
-            type: 'object',
-            properties: {
-                input: {
-                    type: 'string',
-                    description: 'The query to search for image category ex. "cat", "dog", "flower"'
-                }
-            },
-            required: ['input']
-        }
-    },
+    }
 ];

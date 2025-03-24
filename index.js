@@ -46,6 +46,12 @@ const oauth2Client = new google.auth.OAuth2(
     CLIENT_SECRET,
     REDIRECT_URI
 )
+
+
+app.get('/',(req,res)=>{
+    res.send('Index Working')
+})
+
 app.get('/auth', (req, res) => {
     const url = oauth2Client.generateAuthUrl
         ({
